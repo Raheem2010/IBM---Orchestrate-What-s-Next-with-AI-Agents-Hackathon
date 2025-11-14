@@ -5,6 +5,7 @@
  */
 
 
+
 const express = require('express');
 const cors = require('cors');
 const app = express();
@@ -12,9 +13,22 @@ const app = express();
 
 const PORT = process.env.PORT || 3000;
 
+require('dotenv').config();
+const DEMO = String(process.env.DEMO_MODE || '') === '1';
+
+function has(val) { return typeof val === 'string' && /^https?:\/\//i.test(val); }
+
 app.use(cors()); 
 app.use(cors());
 app.use(express.json());
+
+const path = require('path');
+app.use(express.static(path.join(__dirname, 'public')));
+
+app.get('/voice', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'voice-app.html'));
+});
+
 
 app.get('/health', (req, res) => res.json({ ok: true }));
 
@@ -170,3 +184,90 @@ app.listen(PORT, '0.0.0.0', () => {
 // Vercel needs this export
 
 module.exports = app;
+
+const fetch = (...args) => import('node-fetch').then(({default: f}) => f(...args));
+const FormData = require('form-data');
+
+let _iamToken = null;
+let _iamExpiry = 0;
+
+async function getIamToken() {
+  if (DEMO || !process.env.IBM_IAM_API_KEY) {
+    // In demo mode (or no key), skip calling IBM and return null token
+    return null;
+  }
+
+  if (Date.now() < _iamExpiry && _iamToken) return _iamToken;
+
+  const res = await fetch('https://iam.cloud.ibm.com/identity/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Accept': 'application/json' },
+    body: `grant_type=urn:ibm:params:oauth:grant-type:apikey&apikey=${process.env.IBM_IAM_API_KEY}`
+  });
+  if (!res.ok) throw new Error('IAM token request failed');
+  const data = await res.json();
+  _iamToken = data.access_token;
+  _iamExpiry = (data.expiration * 1000) - 30000;
+  return _iamToken;
+}
+
+// --- STT proxy (POST binary audio) ---
+app.post('/api/stt', async (req, res) => {
+  try {
+    // DEMO or no URL -> mock transcript
+    if (DEMO || !has(process.env.STT_URL)) {
+      return res.json({
+        results: [{ alternatives: [{ transcript: "create offer for 200 kg of gari in Ibadan" }] }]
+      });
+    }
+
+    // ... your real STT call (only runs if URL is absolute) ...
+  } catch (e) {
+    return res.json({
+      results: [{ alternatives: [{ transcript: "create offer for 200 kg of gari in Ibadan" }] }]
+    });
+  }
+});
+
+
+// --- TTS proxy (POST text -> mp3) ---
+app.post('/api/tts', express.json(), async (req, res) => {
+  try {
+    if (DEMO || !has(process.env.TTS_URL)) {
+      // return empty mp3 so UI flow proceeds
+      res.setHeader('Content-Type', 'audio/mpeg');
+      return res.end();
+    }
+
+    // ... your real TTS call ...
+  } catch (e) {
+    res.setHeader('Content-Type', 'audio/mpeg');
+    return res.end();
+  }
+});
+
+
+
+// - Orchestrate Web Chat proxy (POST text + optional thread_id) -
+app.post('/api/chat', express.json(), async (req, res) => {
+  try {
+    const text = (req.body && req.body.text) || "sample query";
+
+    if (DEMO || !has(process.env.WXO_INTEGRATION_URL)) {
+      return res.json({
+        thread_id: 'mock-thread-001',
+        output: { generic: [{ response_type: 'text',
+          text: `DEMO: Reply to "${text}". In production, this hits IBM Orchestrate.` }] }
+      });
+    }
+
+    // ... your real WXO call using process.env.WXO_INTEGRATION_URL ...
+  } catch (e) {
+    const text = (req.body && req.body.text) || "";
+    return res.json({
+      thread_id: 'mock-thread-001',
+      output: { generic: [{ response_type: 'text',
+        text: `DEMO (fallback): agent offline. Parsed input: "${text}"` }] }
+    });
+  }
+});

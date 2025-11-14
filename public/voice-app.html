@@ -1,268 +1,143 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AgroSphere Agent (Voice)</title>
-    <style>
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            flex-direction: column;
-            background-color: #f4f7f6;
-            color: #333;
-            height: 100vh;
-            margin: 0;
-        }
-        #container {
-            width: 90%;
-            max-width: 600px;
-            background: #fff;
-            border-radius: 12px;
-            box-shadow: 0 8px 30px rgba(0,0,0,0.1);
-            padding: 2rem;
-            text-align: center;
-        }
-        h1 { color: #0062ff; }
-        #recordButton {
-            width: 100px;
-            height: 100px;
-            border-radius: 50%;
-            border: none;
-            background-color: #0062ff;
-            color: white;
-            font-size: 1.2rem;
-            font-weight: bold;
-            cursor: pointer;
-            transition: background-color 0.3s;
-        }
-        #recordButton.recording {
-            background-color: #d72c2c;
-            animation: pulse 1.5s infinite;
-        }
-        #status {
-            font-size: 1.1rem;
-            margin-top: 1.5rem;
-            min-height: 2em;
-            color: #555;
-        }
-        @keyframes pulse {
-            0% { box-shadow: 0 0 0 0 rgba(215, 44, 44, 0.7); }
-            70% { box-shadow: 0 0 0 20px rgba(215, 44, 44, 0); }
-            100% { box-shadow: 0 0 0 0 rgba(215, 44, 44, 0); }
-        }
-    </style>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>AgroSphere Agent (Voice)</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      display: flex; justify-content: center; align-items: center; flex-direction: column;
+      background-color: #f4f7f6; color: #333; height: 100vh; margin: 0;
+    }
+    #container {
+      width: 90%; max-width: 600px; background: #fff; border-radius: 12px;
+      box-shadow: 0 8px 30px rgba(0,0,0,0.1); padding: 2rem; text-align: center;
+    }
+    h1 { color: #0062ff; }
+    #recordButton {
+      width: 100px; height: 100px; border-radius: 50%; border: none; background-color: #0062ff;
+      color: #fff; font-size: 1.2rem; font-weight: bold; cursor: pointer; transition: background-color .3s;
+    }
+    #recordButton.recording { background-color: #d72c2c; animation: pulse 1.5s infinite; }
+    #status { font-size: 1.1rem; margin-top: 1.5rem; min-height: 2em; color: #555; }
+    @keyframes pulse {
+      0% { box-shadow: 0 0 0 0 rgba(215,44,44,.7); }
+      70% { box-shadow: 0 0 0 20px rgba(215,44,44,0); }
+      100% { box-shadow: 0 0 0 0 rgba(215,44,44,0); }
+    }
+  </style>
 </head>
 <body>
+  <div id="container">
+    <h1>AgroSphere Agent</h1>
+    <button id="recordButton">Hold to Talk</button>
+    <div id="status">Press and hold the button to ask a question.</div>
+    <pre id="response" style="margin-top:1rem; text-align:left; background:#f8f9fb;
+      padding:1rem; border-radius:8px; white-space:pre-wrap; word-wrap:break-word;"></pre>
+  </div>
 
-    <div id="container">
-        <h1>AgroSphere Agent</h1>
-        <button id="recordButton">Hold to Talk</button>
-        <div id="status">Press and hold the button to ask a question.</div>
-    </div>
+  <script>
+    const recordButton = document.getElementById('recordButton');
+    const statusDiv = document.getElementById('status');
+    const responseEl = document.getElementById('response');
 
-    <script>
-        // --- CONFIGURATION ---
-        // 1. PASTE YOUR IAM API KEY HERE
-        const IAM_API_KEY = "YOUR_MASTER_IAM_API_KEY_GOES_HERE";
+    let mediaRecorder;
+    let audioChunks = [];
+    let watsonAgentThreadId;
 
-        // 2. PASTE YOUR AGENT'S PREVIEW URL HERE
-        // How to find this:
-        //    a. Go to your "AgroSphere Agent" in watsonx Orchestrate.
-        //    b. Go to the "Channels" tab (bottom-left).
-        //    c. Click "Create channel" -> "Web chat".
-        //    d. Follow the steps. It will give you an "Integration URL".
-        const AGENT_INTEGRATION_URL = "YOUR_AGENT_INTEGRATION_URL_GOES_HERE";
-        
-        // 3. These URLs are from our research (us-south/Dallas)
-        const STT_URL = "https://api.us-south.speech-to-text.watson.cloud.ibm.com";
-        const TTS_URL = "https://api.us-south.text-to-speech.watson.cloud.ibm.com";
-        // --- END OF CONFIGURATION ---
+    async function transcribeAudio(audioBlob) {
+      statusDiv.textContent = "Transcribing your voice...";
+      const res = await fetch('/api/stt', {
+        method: 'POST',
+        headers: { 'Content-Type': audioBlob.type || 'audio/webm' },
+        body: audioBlob
+      });
+      const data = await res.json();
+      if (data.results && data.results[0] && data.results[0].alternatives[0]) {
+        return data.results[0].alternatives[0].transcript;
+      }
+      throw new Error("Could not transcribe audio.");
+    }
 
+    async function askAgent(textQuery) {
+      statusDiv.textContent = "Agent is thinking...";
+      const res = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: textQuery, thread_id: watsonAgentThreadId })
+      });
+      const data = await res.json();
+      if (data.thread_id) watsonAgentThreadId = data.thread_id;
 
-        // --- UI Elements ---
-        const recordButton = document.getElementById('recordButton');
-        const statusDiv = document.getElementById('status');
-        let mediaRecorder;
-        let audioChunks = [];
-        let watsonAgentThreadId; // To maintain the conversation history
+      if (data.output && data.output.generic) {
+        const textResponse = data.output.generic.find(g => g.response_type === 'text');
+        if (textResponse) return textResponse.text;
+      }
+      if (data.output?.text) return data.output.text;
+      throw new Error("Agent did not return a text response.");
+    }
 
-        // --- AUTHENTICATION (Token Management) ---
-        // We need an IAM token to talk to STT/TTS
-        let iamToken = null;
-        let tokenExpiry = 0;
+    async function speakText(textResponse) {
+      // show text on screen
+      responseEl.textContent = textResponse || "(no text)";
+      statusDiv.textContent = "Agent is replying...";
 
-        // Function to get a fresh IAM token
-        async function getIamToken() {
-            if (Date.now() < tokenExpiry) {
-                return iamToken; // Return cached token if still valid
-            }
+      // call TTS (in demo mode, server may return empty audio)
+      const res = await fetch('/api/tts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: textResponse })
+      });
 
-            statusDiv.textContent = "Authenticating...";
-            const response = await fetch("https://iam.cloud.ibm.com/identity/token", {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/x-www-form-urlencoded",
-                    "Accept": "application/json"
-                },
-                body: `grant_type=urn:ibm:params:oauth:grant-type:apikey&apikey=${IAM_API_KEY}`
-            });
+      if (res.ok) {
+        try {
+          const blob = await res.blob();
+          if (blob.size > 0) {
+            const url = URL.createObjectURL(blob);
+            const audio = new Audio(url);
+            await new Promise((resolve) => { audio.onended = resolve; audio.play(); });
+          }
+        } catch { /* ignore audio errors */ }
+      }
+      statusDiv.textContent = "Press and hold the button to ask a question.";
+    }
 
-            if (!response.ok) {
-                throw new Error("Failed to get IAM token. Check your API Key.");
-            }
+    async function startRecording() {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
+      audioChunks = [];
 
-            const data = await response.json();
-            iamToken = data.access_token;
-            tokenExpiry = (data.expiration * 1000) - 30000; // Set expiry 30s early
-            return iamToken;
+      mediaRecorder.ondataavailable = (e) => audioChunks.push(e.data);
+      mediaRecorder.onstop = async () => {
+        const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+        try {
+          const userQuery = await transcribeAudio(audioBlob);
+          const agentResponse = await askAgent(userQuery);
+          await speakText(agentResponse);
+        } catch (err) {
+          console.error(err);
+          statusDiv.textContent = `Error: ${err.message}`;
+          try { await speakText(`I am sorry, I encountered an error. ${err.message}`); } catch {}
         }
+      };
 
-        // --- 1. SPEECH-TO-TEXT (STT) ---
-        async function transcribeAudio(audioBlob) {
-            const token = await getIamToken();
-            statusDiv.textContent = "Transcribing your voice...";
-            
-            const response = await fetch(`${STT_URL}/v1/recognize`, {
-                method: "POST",
-                headers: {
-                    "Authorization": `Bearer ${token}`,
-                    "Content-Type": audioBlob.type,
-                },
-                body: audioBlob
-            });
+      mediaRecorder.start();
+      recordButton.classList.add('recording');
+      statusDiv.textContent = "Listening...";
+    }
 
-            const data = await response.json();
-            if (data.results && data.results[0] && data.results[0].alternatives[0]) {
-                return data.results[0].alternatives[0].transcript;
-            }
-            throw new Error("Could not transcribe audio.");
-        }
+    function stopRecording() {
+      if (mediaRecorder && mediaRecorder.state === "recording") {
+        mediaRecorder.stop();
+        recordButton.classList.remove('recording');
+      }
+    }
 
-        // --- 2. AGENT COMMUNICATION (watsonx Orchestrate) ---
-        async function askAgent(textQuery) {
-            statusDiv.textContent = "Agent is thinking...";
-
-            // Start a new conversation if we don't have one
-            if (!watsonAgentThreadId) {
-                const startResponse = await fetch(AGENT_INTEGRATION_URL, {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ input: { text: "" } }) // Start the chat
-                });
-                const startData = await startResponse.json();
-                watsonAgentThreadId = startData.thread_id;
-            }
-
-            // Send the user's message in the current conversation thread
-            const response = await fetch(AGENT_INTEGRATION_URL, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    input: { text: textQuery },
-                    thread_id: watsonAgentThreadId
-                })
-            });
-
-            const data = await response.json();
-            
-            // Extract the text response from the agent
-            if (data.output && data.output.generic) {
-                const textResponse = data.output.generic.find(g => g.response_type === 'text');
-                if (textResponse) {
-                    return textResponse.text;
-                }
-            }
-            throw new Error("Agent did not return a text response.");
-        }
-
-        // --- 3. TEXT-TO-SPEECH (TTS) ---
-        async function speakText(textResponse) {
-            const token = await getIamToken();
-            statusDiv.textContent = "Agent is replying...";
-
-            const response = await fetch(`${TTS_URL}/v1/synthesize`, {
-                method: "POST",
-                headers: {
-                    "Authorization": `Bearer ${token}`,
-                    "Content-Type": "application/json",
-                    "Accept": "audio/mp3"
-                },
-                body: JSON.stringify({
-                    text: textResponse,
-                    // We can specify a voice, e.g., a Nigerian accent
-                    // voice: "en-US_AllisonV3Voice" // Standard US
-                })
-            });
-
-            const audioBlob = await response.blob();
-            const audioUrl = URL.createObjectURL(audioBlob);
-            const audio = new Audio(audioUrl);
-            audio.play();
-            
-            // Wait for the audio to finish playing
-            return new Promise(resolve => {
-                audio.onended = () => {
-                    statusDiv.textContent = "Press and hold to ask a question.";
-                    resolve();
-                };
-            });
-        }
-
-        // --- RECORDING LOGIC ---
-        async function startRecording() {
-            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-            mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' }); // Use webm for STT
-            audioChunks = [];
-
-            mediaRecorder.ondataavailable = event => {
-                audioChunks.push(event.data);
-            };
-
-            mediaRecorder.onstop = async () => {
-                const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
-                
-                try {
-                    // This is our full, end-to-end flow!
-                    const userQuery = await transcribeAudio(audioBlob);
-                    const agentResponse = await askAgent(userQuery);
-                    await speakText(agentResponse);
-                
-                } catch (error) {
-                    console.error(error);
-                    statusDiv.textContent = `Error: ${error.message}`;
-                    // Speak the error message
-                    await speakText(`I am sorry, I encountered an error. ${error.message}`);
-                }
-            };
-
-            mediaRecorder.start();
-            recordButton.classList.add('recording');
-            statusDiv.textContent = "Listening...";
-        }
-
-        function stopRecording() {
-            if (mediaRecorder && mediaRecorder.state === "recording") {
-                mediaRecorder.stop();
-                recordButton.classList.remove('recording');
-            }
-        }
-
-        // --- Event Listeners ---
-        recordButton.addEventListener('mousedown', startRecording);
-        recordButton.addEventListener('mouseup', stopRecording);
-        // For mobile
-        recordButton.addEventListener('touchstart', (e) => {
-            e.preventDefault();
-            startRecording();
-        });
-        recordButton.addEventListener('touchend', (e) => {
-            e.preventDefault();
-            stopRecording();
-        });
-
-    </script>
+    recordButton.addEventListener('mousedown', startRecording);
+    recordButton.addEventListener('mouseup', stopRecording);
+    recordButton.addEventListener('touchstart', (e) => { e.preventDefault(); startRecording(); });
+    recordButton.addEventListener('touchend', (e) => { e.preventDefault(); stopRecording(); });
+  </script>
 </body>
 </html>

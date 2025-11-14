@@ -6,6 +6,7 @@ services:
     environment:
       - NODE_ENV=production
       - PORT=3000
+      - DEMO_MODE=1 
     ports:
       - "3000:3000"
     # This is only here because I want a hot-reload in dev; otherwise, we will remove volumes for production-like runs
@@ -14,7 +15,6 @@ services:
       - /app/node_modules
     depends_on:
       - mock-api
-
   mock-api:
     image: python:3.11-slim
     container_name: orchestrate-mock-api

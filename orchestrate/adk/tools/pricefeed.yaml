@@ -1,5 +1,5 @@
 servers:
-  - url:  https://3d64f72867c2.ngrok-free.app
+  - url:    https://ac21b4e889de.ngrok-free.app
 openapi: 3.0.1
 info: { title: PriceFeed API, version: "1.0.0" }
 paths:
